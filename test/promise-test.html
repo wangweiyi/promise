@@ -8,32 +8,11 @@
 	<link rel="stylesheet" type="text/css" href="qunit-1.18.0.css" />
 	<script src="qunit-1.18.0.js"></script>
 	<script src="../promise-0.0.1.js"></script>
-	<!-- <script src="unit-test.js"></script> -->
+	<script src="unit-test.js"></script>
 </head>
 <body>
 	<h1>Promise Unit Test</h1>
 	<div id="qunit"></div>
 	<div id="qunit-fixture"></div>
-	<script>
-var a = new Promise(function(r) {
-	r(0);
-});
-a.then(function(val) {
-	console.log(1, val);
-	return 11;
-})
-.then(function(val) {
-	console.log(2, val);
-	return 22;
-});
-a.then(function(val) {
-	console.log(3, val);
-	return 33;
-})
-.then(function(val) {
-	console.log(4, val);
-	return 44;
-});
-	</script>
 </body>
 </html>

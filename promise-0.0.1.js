@@ -28,7 +28,8 @@
 		this._reason = undefined;
 		this._onFulfilledArr = [];
 		this._onRejectedArr = [];
-		this._next = []; //promise chain
+		// this._next = []; //promise chain
+		this._nextArr = [];
 
 		if(isFunc(task)) {
 			var promise = this, 
@@ -71,8 +72,8 @@
 		var promise = new Promise(null, true),
 			valueCount = 0,
 			valueArr = [],
-			addCallback = function(i) {
-				promiseArr[i]._onFulfilledArr.push(function(value) {
+			addCallback = function(i) { //提成函数是为了保持i值的一致性
+				promiseArr[i].then(function(value) {
 					valueCount++;
 					valueArr[i] = value;
 
@@ -83,8 +84,8 @@
 					//保证原onFulfilled链的行为不被破坏.
 					//即：当原onFulfilledArr为空而原promise被解决时，原promise的nextPromise能正确地以value被解决
 					return value; 
-				});
-				promiseArr[i]._onRejectedArr.push(function(reason) {
+
+				}, function(reason) {
 					reject(promise, reason);
 
 					//保证原onRejected链的行为不被破坏.
@@ -115,37 +116,35 @@
 			throw new TypeError('parameter must be an promise array!');		
 		}
 
-		var promise = new Promise(null, true),
-			onFulfilledCb = function(value) {
+		var promise = new Promise(null, true);
+		for(var i = 0, len = promiseArr.length; i < len; i++) {
+			promiseArr[i].then(function(value) {
 				resolve(promise, value);
 				return value; //原因参见Promise.all
-			},
-			onRejectedCb = function(reason) {
+
+			}, function(reason) {
 				reject(promise, reason);
 				return reason; //原因参见Promise.all
-			};		
-		
-		for(var i = 0, len = promiseArr.length; i < len; i++) {
-			promiseArr[i]._onFulfilledArr.push(onFulfilledCb);
-			promiseArr[i]._onRejectedArr.push(onRejectedCb);
+			});
 		}
-
 		return promise;
 	};
 
 	/**
-	 * 返回一个被完成了的Promise对象，结果由参数value指定。若value是一个thenable, 则该Promise对象会接受其
+	 * 返回一个被解决的Promise对象，值通过参数指定。当参数为thenable时，接受其状态; 否则，以参数完成promise.
 	 *
 	 * @memberOf Promise
 	 * @param  {Array} promiseArr 等待执行的promise队列
 	 * @return {Promise} 一个新的promise对象
 	 */
 	Promise.resolve = function(value) {
-
+		var promise = new Promise(null, true);
+		resolve(promise, value);
+		return promise;
 	};
 
 	/**
-	 * 返回一个已经被拒绝了的Promise对象，拒因由参数reason指定
+	 * 返回一个已经被拒绝了的Promise对象，原因由参数指定。
 	 *
 	 * @memberOf Promise
 	 * @param  {Any} reason Promise的拒因
@@ -170,25 +169,30 @@
 		 */
 		then: function(onFulfilled, onRejected) {
 			var isOnFulfilledFunc = isFunc(onFulfilled), 
-				isonRejectedFunc = isFunc(onRejected);
+				isOnRejectedFunc = isFunc(onRejected);
 
 			if(isOnFulfilledFunc) {
 				this._onFulfilledArr.push(onFulfilled);
+			} else {
+				this._onFulfilledArr.push(null);
 			}
 			
-			if(isonRejectedFunc) {
+			if(isOnRejectedFunc) {
 				this._onRejectedArr.push(onRejected);
+			} else {
+				this._onRejectedArr.push(null);
 			}
 
 			if(this._state === 'fulfilled') {
 				isOnFulfilledFunc && onFulfilled(this._value);
 
 			} else if(this._state === 'rejected') {
-				isonRejectedFunc && onRejected(this._reason);
+				isOnRejectedFunc && onRejected(this._reason);
 			}
 
-			this._next = new Promise(null, true);
-			return this._next;
+			var next = new Promise(null, true);
+			this._nextArr.push(next)
+			return next;
 		},
 
 		/**
@@ -199,18 +203,23 @@
 		 * @return {Promise}  一个新的Promise对象
 		 */
 		catch: function(onRejected) {
-			var isonRejectedFunc = isFunc(onRejected);
+			var isOnRejectedFunc = isFunc(onRejected);
 			
-			if(isonRejectedFunc) {
+			this._onFulfilledArr.push(null);
+			
+			if(isOnRejectedFunc) {
 				this._onRejectedArr.push(onRejected);
+			} else {
+				this._onRejectedArr.push(null);
 			}
 
 			if(this._state === 'rejected') {
-				isonRejectedFunc && onRejected(this._reason);
+				isOnRejectedFunc && onRejected(this._reason);
 			}
 
-			this._next = new Promise(null, true);
-			return this._next;
+			var next = new Promise(null, true);
+			this._nextArr.push(next)
+			return next;
 		},
 
 		isFulfilled: function() {
@@ -233,7 +242,7 @@
 						
 		} else if(x instanceof Promise) {
 			
-			if(inQueue(promise, x)) {
+			if(willCauseDeadlock(promise, x)) {
 				reject(promise, new TypeError('cannot resolve promise with a Promise that participates in a circular thenable chain'));
 				return;
 			}
@@ -241,9 +250,12 @@
 			switch(x._state) {
 				case 'pending':
 					//remain pending until x is fulfilled or rejected
-					x._onFulfilledArr = x._onFulfilledArr.concat(promise._onFulfilledArr);
-					x._onRejectedArr = x._onRejectedArr.concat(promise._onRejectedArr);
-					x._next = promise._next;
+					x.then(function(value) {
+						fulfill(promise, value);
+
+					}, function(reason) {
+						reject(promise, reason);
+					})
 					break;
 
 				case 'fulfilled': 
@@ -267,7 +279,7 @@
 
 			if (isFunc(then)) {			
 				
-				if(inQueue(promise, x)) {
+				if(willCauseDeadlock(promise, x)) {
 					reject(promise, new TypeError('cannot resolve promise with a thenable that participates in a circular thenable chain'));
 					return;
 				}
@@ -313,23 +325,18 @@
 		promise._state = 'fulfilled';
 		promise._value = value;
 
-		var f, rtv, nextPromise = promise._next;			
-		try {
-			if(promise._onFulfilledArr.length) {
-				for(var i = 0, len = promise._onFulfilledArr.length; i < len; i++) {
-					f = promise._onFulfilledArr[i]; //直接调用时this会指向onFulfilledArr这个数组
-					rtv = f(promise._value); //以函数方式调用，即非严格模式下promise为window, 严格模式下为undefined
-				}
+		var f, rtvArr = [];	
+		for(var i = 0, len = promise._nextArr.length; i < len; i++) {
+			try {
+				f = promise._onFulfilledArr[i]; //以函数方式执行回调
+				rtvArr[i] = f ? [f(promise._value)] : [promise._value]; //以相同的值解决next
 
-			} else {
-				nextPromise && fulfill(nextPromise, promise._value);
+			} catch(e) {
+				rtvArr[i] = [null, e];
 			}
-
-		} catch(e) {
-			nextPromise && reject(nextPromise, e);
 		}
 
-		nextPromise && resolve(nextPromise, rtv);
+		handleNext(promise, rtvArr);
 	}
 
 	//拒绝
@@ -341,32 +348,44 @@
 		promise._state = 'rejected';
 		promise._reason = reason;
 
-		var f, rtv, nextPromise = promise._next;			
-		try {
-			if(promise._onRejectedArr.length) {
-				for(var i = 0, len = promise._onRejectedArr.length; i < len; i++) {
-					f = promise._onRejectedArr[i]; //直接调用时this会指向onRejectedArr这个数组
-					rtv = f(promise._reason); //以函数方式调用，即非严格模式下promise为window, 严格模式下为undefined
-				}
+		var f, rtvArr = [];	
+		for(var i = 0, len = promise._nextArr.length; i < len; i++) {
+			try {
+				f = promise._onRejectedArr[i]; //以函数方式执行回调
+				rtvArr[i] = f ? [f(promise._reason)] : [null, promise._reason]; //以相同的原因拒绝next
 
-			} else {
-				nextPromise && reject(nextPromise, promise._reason);
+			} catch(e) {
+				rtvArr[i] = [null, e];
 			}
-
-		} catch(e) {
-			nextPromise && reject(nextPromise, e);
 		}
 
-		nextPromise && resolve(nextPromise, rtv);
+		handleNext(promise, rtvArr);
 	}
 
-	//判断x是否在promise的解决队列中（即如果用x来解决promise会引起死循环）
-	function inQueue(promise, x) {
+	//处理后续的promise
+	function handleNext(promise, rtvArr) {
+		//promise已处理完毕，故清空回调以释放内存
+		promise._onFulfilledArr = [];
+		promise._onRejectedArr = [];
+
+		for(var nextArr = promise._nextArr, i = 0, len = promise._nextArr.length; i < len; i++) {
+			rtvArr[i][1] ? reject(nextArr[i], rtvArr[i][1]) : resolve(nextArr[i], rtvArr[i][0]);
+		}
+	}
+
+	//判断是否用x来解决promise会引起死循环）
+	function willCauseDeadlock(promise, x) {
 		if(!promise.chain) {
-			//promise._next cannot be resolved from outside.
-			//promise in array is to prevent promise --> x --> promise
-			promise.chain = x.chain = [promise._next, promise, x]; 
-		
+			var arr = [];
+
+			for(var i = 0, len = promise._nextArr.length; i < len; i++) { //promise._nextArr cannot be resolved from outside.
+				arr.push(promise._nextArr[i]);
+			}
+			arr.push(promise); //prevent promise --> x --> promise
+			arr.push(x); 
+
+			promise.chain = x.chain = arr; 
+
 		} else {
 			for(var i = 0, len = promise.chain.length; i < len; i++) {
 				if(x === promise.chain[i]) {

@@ -517,7 +517,8 @@ QUnit.test('arugments', function(assert) {
 		setTimeout(function() {
 			// p2 is already rejected now, so onRejected will get invoked immediately. 
 			// as onRejected is not a function below, it should be ignored instead of invoking which will cause an error
-			p2.then(null, 'haha'); 
+			p2.then(null, 'haha'); //这里由于回调不是函数，如果被当作函数调用的话，是会引起异常的，从而ok6会变为false. 
+								//因此，在finally中如果ok6的值仍为true, 则说明非函数回调没有被调用
 			done6();
 		}, 100);
 
@@ -644,6 +645,107 @@ QUnit.test('onRejected invocation', function(assert) {
 		})();
 		
 		done();
+	});
+});
+QUnit.test('promise chain - multiple not single', function(assert) {
+	var done = assert.async();
+	var p = new Promise(function(resolve) {
+		resolve(0);
+	});
+	p.then(function(v) {
+		assert.equal(v, 0);
+		return 1;
+
+	}).then(function(v) {
+		assert.equal(v, 1);
+		return 11;
+	});
+	p.then(function(v) {
+		assert.equal(v, 0);
+		return 2;
+		
+	}).then(function(v) {
+		assert.equal(v, 2);
+		done();
+		return 22;
+	});
+
+	var done2 = assert.async();
+	var p2 = new Promise(function(resolve) {
+		resolve(0);
+	});
+	p2.then().then(function(v) {
+		assert.equal(v, 0);
+		return 11;
+	});
+	p2.then(function(v) {
+		assert.equal(v, 0);
+		return 2;
+		
+	}).then(function(v) {
+		assert.equal(v, 2);
+		done2();
+		return 22;
+	});
+
+	var done3 = assert.async();
+	var p3 = new Promise(function(resolve, reject) {
+		reject('err');
+	});
+	p3.then().then(null, function(reason) {
+		assert.equal(reason, 'err');
+		return 11;
+	});
+	p3.then().then(null, function(reason) {
+		assert.equal(reason, 'err');
+		done3();
+	});
+	p3.catch(function(reason) {
+		assert.equal(reason, 'err', 'error callback registered with catch');
+	});
+
+	var done4 = assert.async();
+	var p4 = new Promise(function(resolve) {
+		resolve(0);
+	});
+	p4.then(function(v) {
+		assert.equal(v, 0);
+		throw 'exception';
+
+	}).then(null, function(reason) {
+		assert.equal(reason, 'exception');
+		return 'exception handled';
+	});
+	p4.then(function(v) {
+		assert.equal(v, 0);
+		return 2;
+		
+	}).then(function(v) {
+		assert.equal(v, 2);
+		done4();
+		return 22;
+	});
+
+	var done5 = assert.async();
+	var p5 = new Promise(function(resolve, reject) {
+		reject('err');
+	});
+	p5.then(null, function(reason) {
+		assert.equal(reason, 'err');
+		throw 'exception';
+
+	}).then(null, function(reason) {
+		assert.equal(reason, 'exception');
+		return 'exception handled';
+	});
+	p5.then(null, function(reason) {
+		assert.equal(reason, 'err');
+		return 2;
+		
+	}).then(function(value) {
+		assert.equal(value, 2);
+		done5();
+		return 22;
 	});
 });
 
@@ -1387,5 +1489,314 @@ QUnit.test('reject', function(assert) {
 		var delta = +new Date() - start;
 		assert.ok(delta > 200 && delta < 2000 && reason === 'error1', 'promise is rejected once one of the precedent promises get rejected');
 		done2();
+	});
+});
+
+QUnit.module('Promise.resolve');
+QUnit.test('argument is a promise', function(assert) {
+	var done = assert.async(), count = 0;
+	var p = Promise.resolve(new Promise(function(innerFulfill) {
+		setTimeout(function() {
+			innerFulfill(123);
+		}, 1000);
+		assert.equal(count, 0, 'when argument is pending, promise must remain pending until argument is fulfilled or rejected.');
+
+	}));
+	p.then(function(value) {
+		count++;
+		assert.equal(value, 123, 'when argument is fulfilled, fulfill promise with the same value');
+	});
+	p.then(function(value) {
+		count++;
+		assert.equal(value, 123, 'when argument is fulfilled, fulfill promise with the same value');
+	});
+	p.then(function(value) {
+		count++;
+		assert.equal(value, 123, 'when argument is fulfilled, fulfill promise with the same value');
+		done();
+	});
+
+	var done2 = assert.async(),  count2 = 0;
+	var p2 = Promise.resolve(new Promise(function(innerFulfill, innerReject) {
+		setTimeout(function() {
+			innerReject('error occurs');
+		}, 1000);
+		assert.equal(count2, 0, 'when argument is pending, promise2 must remain pending until argument is fulfilled or rejected.')
+	}));
+	p2.then(null, function(reason) {
+		count2++;
+		assert.equal(reason, 'error occurs', 'when argument is rejected, reject promise with the same reason')
+	});
+	p2.then(null, function(reason) {
+		count2++;
+		assert.equal(reason, 'error occurs', 'when argument is rejected, reject promise with the same reason')
+		done2();
+	});
+});
+QUnit.test('argument is a thenable', function(assert) {
+	var done = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			resolvePromise(123);
+		}
+
+	}).then(function(value) {
+		assert.equal(value, 123, 'resolvePromise called with a number, resolve promise with the number');
+		done();
+	});
+
+	var done2 = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			resolvePromise('string');
+		}
+
+	}).then(function(value) {
+		assert.equal(value, 'string', 'resolvePromise called with string, resolve promise with the string');
+		done2();
+	});
+
+	var done3 = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			resolvePromise();
+		}
+
+	}).then(function(value) {
+		assert.equal(value, undefined, 'resolvePromise called with undefined, resolve promise with undefined');
+		done3();
+	});
+
+	var done4 = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			resolvePromise({
+				then: function(resolvePromise2, rejectPromise2) {
+					resolvePromise2('haha');
+				}
+			});
+		}
+
+	}).then(function(value) {
+		assert.equal(value, 'haha', 'resolvePromise called with a thenable, resolve promise with the thenable');
+		done4();
+	});
+
+	var done5 = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			resolvePromise({
+				then: function(resolvePromise2, rejectPromise2) {
+					rejectPromise2(new Error('something wrong'));
+				}
+			});
+		}
+
+	}).then(null, function(reason) {
+		assert.ok(reason instanceof Error, 'resolvePromise called with a thenable, resolve promise with the thenable');
+		done5();
+	});
+
+	var done6 = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			rejectPromise({
+				then: function(resolvePromise2, rejectPromise2) {
+					rejectPromise2(new Error('something wrong'));
+				}
+			});
+		}
+
+	}).then(null, function(reason) {
+		assert.ok(reason.then instanceof Function, 'rejectPromise called with r, reject promise with r');
+		done6();
+	});
+
+	var done7 = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			resolvePromise('resolve promise');
+			rejectPromise({
+				then: function(resolvePromise2, rejectPromise2) {
+					rejectPromise2(new Error('something wrong'));
+				}
+			});
+		}
+
+	}).then(function(value) {
+		assert.equal(value, 'resolve promise', 'both resolvePromise and rejectPromise are called, ignore rejectPromise');
+		done7();
+	});
+
+	var done8 = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			rejectPromise({
+				then: function(resolvePromise2, rejectPromise2) {
+					rejectPromise2(new Error('something wrong'));
+				}
+			});
+			resolvePromise('resolve promise');
+		}
+
+	}).then(null, function(reason) {
+		assert.ok(reason.then instanceof Function, 'both rejectPromise and resolvePromise are called, ignore resolvePromise');
+		done8();
+	});
+
+	var done9 = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			resolvePromise('resolve promise');
+			resolvePromise('resolve promise2');
+			resolvePromise('resolve promise3');
+		}
+
+	}).then(function(value) {
+		assert.equal(value, 'resolve promise', 'resolvePromise are called 3 times, use the first');
+		done9();
+	});
+
+	var done10 = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			rejectPromise('error');
+			rejectPromise('error2');
+			rejectPromise('error3');
+		}
+
+	}).then(null, function(reason) {
+		assert.equal(reason, 'error', 'rejectPromise are called 3 times, use the first');
+		done10();
+	});
+
+	var done11 = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			throw 'exception';
+		}
+
+	}).then(null, function(reason) {
+		assert.equal(reason, 'exception', 'then throws a exception and neither resolvePromise nor rejectPromise has been called, reject promise with the exception');
+		done11();
+	});
+
+	var done12 = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			resolvePromise(333);
+			throw 'exception';
+		}
+
+	}).then(function(value) {
+		assert.equal(value, 333, 'then throws a exception and resolvePromise has been called, ignore it');
+		done12();
+	});
+
+	var done13 = assert.async();
+	Promise.resolve({
+		then: function(resolvePromise, rejectPromise) {
+			rejectPromise('error');
+			throw 'exception';
+		}
+
+	}).then(null, function(reason) {
+		assert.equal(reason, 'error', 'then throws a exception and rejectPromise has been called, ignore it');
+		done13();
+	});
+
+	var done14 = assert.async();
+	Promise.resolve({
+		get then() {
+			throw 'then cannot be accessed from outside!';
+		}
+
+	}).then(null, function(reason) {
+		assert.equal(reason, 'then cannot be accessed from outside!', 
+			'retrieving the property x.then results in a thrown exception e, reject promise with e');
+		done14();
+	});
+});
+QUnit.test('argument is neither a promise nor a thenable', function(assert) {
+	var done = assert.async();
+	Promise.resolve(1.56).then(function(value) {
+		assert.equal(value, 1.56, 'x is a number');
+		done();
+	});
+
+	var done2 = assert.async();
+	Promise.resolve('hhah').then(function(value) {
+		assert.equal(value, 'hhah', 'x is a string');
+		done2();
+	});
+
+	var done3 = assert.async();
+	Promise.resolve().then(function(value) {
+		assert.equal(value, undefined, 'x is undefined');
+		done3();
+	});
+
+	var done4 = assert.async();
+	Promise.resolve(null).then(function(value) {
+		assert.equal(value, null, 'x is null');
+		done4();
+	});
+
+	var done5 = assert.async();
+	Promise.resolve({name: 'xiahua'}).then(function(value) {
+		assert.deepEqual(value, {name: 'xiahua'}, 'x is an object');
+		done5();
+	});
+
+	var done6 = assert.async();
+	var f = function() {};
+	Promise.resolve(f).then(function(value) {
+		assert.equal(value, f, 'x is an function');
+		done6();
+	});
+
+	var done7 = assert.async();
+	var o = {
+		count: 0,
+		get then() {
+			return ++o.count;
+		}
+	};
+	Promise.resolve(o).then(function(value) {
+		assert.equal(value.count, 1, 'if x is an object or function, let then be x.then, avoiding change between retrievals');
+		done7();
+	});
+});
+
+QUnit.module('Promise.reject');
+QUnit.test('will be rejected dispite of the argument type', function(assert) {
+	var done = assert.async();
+	Promise.reject(new Promise(function(resolve, reject) {
+		resolve(2323);
+	})).then(null, function(reason) {
+		assert.ok(reason instanceof Promise, 'argument is a promise, reject it with the given promise');
+		done();
+	});
+
+	var done2 = assert.async();
+	Promise.reject({
+		then: function(resolvePromise) {
+			resolvePromise(33);
+		}
+	}).then(null, function(reason) {
+		assert.ok(reason instanceof Object, 'argument is a thenable, reject it with the thenable');
+		done2();
+	});
+
+	var done3 = assert.async();
+	Promise.reject(function() {}).then(null, function(reason) {
+		assert.ok(reason instanceof Function, 'argument is a function, reject it with the function');
+		done3();
+	});
+
+	var done4 = assert.async();
+	Promise.reject('err').then(null, function(reason) {
+		assert.equal(reason, 'err', 'argument is a string, reject it with the string');
+		done4();
 	});
 });
